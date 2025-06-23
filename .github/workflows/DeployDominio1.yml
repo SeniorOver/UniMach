@@ -1,0 +1,78 @@
+name: Deploy Unimach Microservices to EC2
+ 
+on:
+  push:
+    branches:
+      - main
+ 
+jobs:
+  build_and_push_images:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+ 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+ 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERUSER }}
+          password: ${{ secrets.DOCKERKEY1 }}
+ 
+      - name: Build and push AuthService
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/AutenticacionySeguridad/AuthService
+          file: ./backend/AutenticacionySeguridad/AuthService/Dockerfile
+          push: true
+          tags: erickfabricioc/AuthService:latest
+ 
+ 
+  deploy_to_ec2:
+    name: Deploy Docker Containers to EC2
+    runs-on: ubuntu-latest
+    needs: build_and_push_images
+    steps:
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SEGURIDADAUTENTICACION_KEY}}
+ 
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.SEGURIDADAUTENTICACION_HOST}}
+          username: ec2-user
+          key: ${{ secrets.SEGURIDADAUTENTICACION_KEY}}
+          port: 22
+          script: |
+            # Instalar Docker si no existe
+            if ! command -v docker &> /dev/null; then
+              sudo yum update -y
+              sudo amazon-linux-extras install docker -y
+              sudo service docker start
+              sudo usermod -a -G docker ec2-user
+            fi
+ 
+            # Parar y eliminar contenedores anteriores
+            sudo docker stop AuthService || true
+            sudo docker rm AuthService || true
+            # Limpiar imágenes no utilizadas
+            sudo docker system prune -f
+ 
+            # Pull de las nuevas imágenes
+            sudo docker pull erickfabricioc/AuthService:latest
+ 
+            # Iniciar contenedores con puertos específicos
+            sudo docker run -d \
+              --name AuthService \
+              -p 8013:8013 \
+             erickfabricioc/AuthService:latest
+ 
+            # Verificar estado de los contenedores
+            sudo docker ps -a
+ 
+ 
